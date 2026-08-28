@@ -7,12 +7,36 @@ import os
 import urllib.request
 
 
+MAX_HTTP_RESPONSE_BYTES = 1024 * 1024
+MAX_MODELS = 128
+MAX_MODEL_NAME_LENGTH = 256
+MAX_FIELD_LENGTH = 64
+MAX_ERROR_LENGTH = 512
+
+
+def bounded_text(value, limit: int) -> str:
+    text = str(value or "")
+    text = "".join(character if character.isprintable() else " " for character in text)
+    return text[:limit]
+
+
+def bounded_models(payload: dict) -> list[dict]:
+    models = payload.get("models", [])
+    return models[:MAX_MODELS] if isinstance(models, list) else []
+
+
 def request(base: str, path: str, payload=None):
     data = None if payload is None else json.dumps(payload).encode()
     req = urllib.request.Request(base.rstrip("/") + path, data=data,
                                  headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=120) as response:
-        return json.load(response)
+        raw = response.read(MAX_HTTP_RESPONSE_BYTES + 1)
+    if len(raw) > MAX_HTTP_RESPONSE_BYTES:
+        raise ValueError("Ollama response exceeds 1 MiB")
+    result = json.loads(raw.decode("utf-8"))
+    if not isinstance(result, dict):
+        raise ValueError("Ollama response must be a JSON object")
+    return result
 
 
 def main() -> int:
@@ -23,30 +47,42 @@ def main() -> int:
     args = parser.parse_args()
     try:
         if args.action == "list":
-            tags = request(args.url, "/api/tags").get("models", [])
-            loaded = request(args.url, "/api/ps").get("models", [])
-            loaded_names = {m.get("name") or m.get("model") for m in loaded}
+            tags = bounded_models(request(args.url, "/api/tags"))
+            loaded = bounded_models(request(args.url, "/api/ps"))
+            loaded_names = {
+                bounded_text(item.get("name") or item.get("model"), MAX_MODEL_NAME_LENGTH)
+                for item in loaded if isinstance(item, dict)
+            }
             models = []
             for item in tags:
-                name = item.get("name") or item.get("model") or ""
-                details = item.get("details") or {}
+                if not isinstance(item, dict):
+                    continue
+                name = bounded_text(item.get("name") or item.get("model"), MAX_MODEL_NAME_LENGTH)
+                if not name:
+                    continue
+                details = item.get("details")
+                details = details if isinstance(details, dict) else {}
+                size = item.get("size", 0)
+                size = min(max(int(size), 0), 10**16) if isinstance(size, (int, float)) else 0
                 models.append({"name": name, "loaded": name in loaded_names,
-                               "size": item.get("size", 0),
-                               "parameters": details.get("parameter_size", ""),
-                               "quantization": details.get("quantization_level", "")})
+                               "size": size,
+                               "parameters": bounded_text(details.get("parameter_size"), MAX_FIELD_LENGTH),
+                               "quantization": bounded_text(details.get("quantization_level"), MAX_FIELD_LENGTH)})
             print(json.dumps({"ok": True, "models": models}))
         elif not args.model:
             raise ValueError("a model name is required")
         elif args.action == "load":
-            request(args.url, "/api/generate", {"model": args.model, "prompt": "",
+            model = bounded_text(args.model, MAX_MODEL_NAME_LENGTH)
+            request(args.url, "/api/generate", {"model": model, "prompt": "",
                                                  "stream": False, "keep_alive": -1})
-            print(json.dumps({"ok": True, "message": args.model + " loaded"}))
+            print(json.dumps({"ok": True, "message": model + " loaded"}))
         else:
-            request(args.url, "/api/generate", {"model": args.model, "prompt": "",
+            model = bounded_text(args.model, MAX_MODEL_NAME_LENGTH)
+            request(args.url, "/api/generate", {"model": model, "prompt": "",
                                                  "stream": False, "keep_alive": 0})
-            print(json.dumps({"ok": True, "message": args.model + " unloaded"}))
+            print(json.dumps({"ok": True, "message": model + " unloaded"}))
     except Exception as error:
-        print(json.dumps({"ok": False, "error": str(error)}))
+        print(json.dumps({"ok": False, "error": bounded_text(error, MAX_ERROR_LENGTH)}))
         return 1
     return 0
 

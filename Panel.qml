@@ -34,6 +34,12 @@ Panel {
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
 
+  function plainText(value, limit) {
+    return String(value || "").slice(0, limit).replace(/[<>&]/g, function(character) {
+      return character === "<" ? "‹" : character === ">" ? "›" : "＆"
+    }).replace(/[\u0000-\u001f\u007f]/g, " ")
+  }
+
   function applyStatus(value) {
     var data = value
     if (typeof value === "string") {
@@ -44,9 +50,9 @@ Panel {
     load = Number(data.load || 0)
     active = online && (data.active === true || load >= threshold)
     modelCount = Number(data.modelCount || 0)
-    loadedModel = String(data.model || "")
-    backend = String(data.backend || "none")
-    errorText = String(data.error || "")
+    loadedModel = plainText(data.model, 256)
+    backend = plainText(data.backend || "none", 32)
+    errorText = plainText(data.error, 384)
   }
 
   function open() {
@@ -70,10 +76,15 @@ Panel {
     try {
       var data = JSON.parse(String(raw || ""))
       var options = []
-      for (var i = 0; i < data.models.length; i++) {
+      if (!Array.isArray(data.models)) throw new Error("Invalid model list")
+      for (var i = 0; i < Math.min(data.models.length, 128); i++) {
         var m = data.models[i]
-        options.push({value: m.name, label: m.name + (m.loaded ? "  • loaded" : ""),
-          description: [m.parameters, m.quantization].filter(Boolean).join(" · ")})
+        var rawName = String(m.name || "").slice(0, 256)
+        if (rawName === "") continue
+        options.push({value: rawName,
+          label: plainText(rawName, 256) + (m.loaded ? "  • loaded" : ""),
+          description: [plainText(m.parameters, 64), plainText(m.quantization, 64)]
+            .filter(Boolean).join(" · ")})
       }
       modelOptions = options
       if (selectedModel === "" && options.length > 0) selectedModel = options[0].value
@@ -92,7 +103,7 @@ Panel {
       onStreamFinished: {
         try {
           var result = JSON.parse(String(text || ""))
-          root.actionNote = result.ok ? result.message : result.error
+          root.actionNote = root.plainText(result.ok ? result.message : result.error, 384)
         } catch (e) { root.actionNote = "Ollama action failed" }
       }
     }
@@ -240,9 +251,9 @@ Panel {
 
           RowLayout {
             Layout.fillWidth: true
-            Text { text: "RESOURCE LOAD"; color: root.dim; font.family: root.fontFamily; font.pixelSize: Style.font.caption; font.bold: true }
+            Text { text: "RESOURCE LOAD"; textFormat: Text.PlainText; color: root.dim; font.family: root.fontFamily; font.pixelSize: Style.font.caption; font.bold: true }
             Item { Layout.fillWidth: true }
-            Text { text: Math.round(root.load) + "%  " + root.backend.toUpperCase(); color: root.stateColor; font.family: root.fontFamily; font.pixelSize: Style.font.body; font.bold: true }
+            Text { text: Math.round(root.load) + "%  " + root.backend.toUpperCase(); textFormat: Text.PlainText; color: root.stateColor; font.family: root.fontFamily; font.pixelSize: Style.font.body; font.bold: true }
           }
           Rectangle {
             Layout.fillWidth: true
@@ -262,6 +273,7 @@ Panel {
             Layout.fillWidth: true
             text: root.active ? "Tokens are flowing. The ring pulses while the local runner is working."
               : "Standing by. Pick a model below to keep it warm in memory."
+            textFormat: Text.PlainText
             color: root.dim; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall
             wrapMode: Text.WordWrap
           }
@@ -307,6 +319,7 @@ Panel {
             Layout.fillWidth: true
             visible: root.actionNote !== ""
             text: root.actionNote
+            textFormat: Text.PlainText
             color: root.stateColor; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall
             wrapMode: Text.WordWrap
           }

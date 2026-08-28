@@ -11,11 +11,42 @@ import urllib.error
 import urllib.request
 
 
+MAX_HTTP_RESPONSE_BYTES = 1024 * 1024
+MAX_MODELS = 128
+MAX_TEXT_LENGTH = 256
+MAX_ERROR_LENGTH = 512
+
+
+def bounded_text(value, limit: int = MAX_TEXT_LENGTH) -> str:
+    text = str(value or "")
+    text = "".join(character if character.isprintable() else " " for character in text)
+    return text[:limit]
+
+
+def read_json_response(response) -> dict:
+    raw = response.read(MAX_HTTP_RESPONSE_BYTES + 1)
+    if len(raw) > MAX_HTTP_RESPONSE_BYTES:
+        raise ValueError("Ollama response exceeds 1 MiB")
+    payload = json.loads(raw.decode("utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("Ollama response must be a JSON object")
+    return payload
+
+
 def ollama_models(url: str) -> list[dict]:
     with urllib.request.urlopen(url.rstrip("/") + "/api/ps", timeout=0.8) as response:
-        payload = json.load(response)
+        payload = read_json_response(response)
     models = payload.get("models", [])
-    return models if isinstance(models, list) else []
+    if not isinstance(models, list):
+        return []
+    safe_models = []
+    for model in models[:MAX_MODELS]:
+        if not isinstance(model, dict):
+            continue
+        name = bounded_text(model.get("name") or model.get("model"))
+        if name:
+            safe_models.append({"name": name})
+    return safe_models
 
 
 def runner_ticks() -> tuple[int, int]:
@@ -76,15 +107,16 @@ def main() -> int:
     args = parser.parse_args()
     try:
         models = ollama_models(args.url)
-    except (OSError, urllib.error.URLError, json.JSONDecodeError) as error:
+    except (OSError, urllib.error.URLError, json.JSONDecodeError, UnicodeDecodeError, ValueError) as error:
         print(json.dumps({"online": False, "active": False, "load": 0, "modelCount": 0,
-                          "model": "", "backend": "none", "error": str(error)}))
+                          "model": "", "backend": "none",
+                          "error": bounded_text(error, MAX_ERROR_LENGTH)}))
         return 0
 
     gpu, backend = gpu_load()
     cpu = cpu_load()
     load = round(max(cpu, gpu), 1)
-    names = [str(model.get("name") or model.get("model") or "") for model in models]
+    names = [model["name"] for model in models]
     print(json.dumps({"online": True, "active": load >= args.threshold, "load": load,
                       "modelCount": len(models), "model": names[0] if names else "",
                       "models": names, "backend": backend, "cpu": round(cpu, 1), "gpu": round(gpu, 1)}))

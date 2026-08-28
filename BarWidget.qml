@@ -24,6 +24,12 @@ BarWidget {
   implicitWidth: vertical ? barSize : Style.bar.iconSlot
   implicitHeight: vertical ? Style.bar.iconSlot : barSize
 
+  function plainText(value, limit) {
+    return String(value || "").slice(0, limit).replace(/[<>&]/g, function(character) {
+      return character === "<" ? "‹" : character === ">" ? "›" : "＆"
+    }).replace(/[\u0000-\u001f\u007f]/g, " ")
+  }
+
   function refresh() {
     if (!probe.running) probe.running = true
   }
@@ -35,9 +41,9 @@ BarWidget {
       load = Math.max(0, Math.min(100, Number(data.load || 0)))
       active = online && (data.active === true || load >= threshold)
       modelCount = Number(data.modelCount || 0)
-      model = String(data.model || "")
-      backend = String(data.backend || "none")
-      errorText = String(data.error || "")
+      model = plainText(data.model, 256)
+      backend = plainText(data.backend || "none", 32)
+      errorText = plainText(data.error, 384)
     } catch (e) {
       online = false
       active = false
