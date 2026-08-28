@@ -1,0 +1,55 @@
+#!/usr/bin/env python3
+"""Small dependency-free Ollama controller used by the QML panel."""
+
+import argparse
+import json
+import os
+import urllib.request
+
+
+def request(base: str, path: str, payload=None):
+    data = None if payload is None else json.dumps(payload).encode()
+    req = urllib.request.Request(base.rstrip("/") + path, data=data,
+                                 headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=120) as response:
+        return json.load(response)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("action", choices=["list", "load", "unload"])
+    parser.add_argument("model", nargs="?")
+    parser.add_argument("--url", default=os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434"))
+    args = parser.parse_args()
+    try:
+        if args.action == "list":
+            tags = request(args.url, "/api/tags").get("models", [])
+            loaded = request(args.url, "/api/ps").get("models", [])
+            loaded_names = {m.get("name") or m.get("model") for m in loaded}
+            models = []
+            for item in tags:
+                name = item.get("name") or item.get("model") or ""
+                details = item.get("details") or {}
+                models.append({"name": name, "loaded": name in loaded_names,
+                               "size": item.get("size", 0),
+                               "parameters": details.get("parameter_size", ""),
+                               "quantization": details.get("quantization_level", "")})
+            print(json.dumps({"ok": True, "models": models}))
+        elif not args.model:
+            raise ValueError("a model name is required")
+        elif args.action == "load":
+            request(args.url, "/api/generate", {"model": args.model, "prompt": "",
+                                                 "stream": False, "keep_alive": -1})
+            print(json.dumps({"ok": True, "message": args.model + " loaded"}))
+        else:
+            request(args.url, "/api/generate", {"model": args.model, "prompt": "",
+                                                 "stream": False, "keep_alive": 0})
+            print(json.dumps({"ok": True, "message": args.model + " unloaded"}))
+    except Exception as error:
+        print(json.dumps({"ok": False, "error": str(error)}))
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

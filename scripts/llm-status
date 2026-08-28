@@ -1,0 +1,95 @@
+#!/usr/bin/env python3
+"""Report Ollama availability and local inference activity as one JSON object."""
+
+import argparse
+import json
+import os
+from pathlib import Path
+import subprocess
+import time
+import urllib.error
+import urllib.request
+
+
+def ollama_models(url: str) -> list[dict]:
+    with urllib.request.urlopen(url.rstrip("/") + "/api/ps", timeout=0.8) as response:
+        payload = json.load(response)
+    models = payload.get("models", [])
+    return models if isinstance(models, list) else []
+
+
+def runner_ticks() -> tuple[int, int]:
+    total = 0
+    count = 0
+    for proc in Path("/proc").glob("[0-9]*"):
+        try:
+            command = (proc / "cmdline").read_bytes().replace(b"\0", b" ").decode(errors="ignore")
+            if "ollama runner" not in command and "ollama_llama_server" not in command:
+                continue
+            fields = (proc / "stat").read_text().split()
+            total += int(fields[13]) + int(fields[14])
+            count += 1
+        except (OSError, ValueError, IndexError):
+            continue
+    return total, count
+
+
+def cpu_load(sample_seconds: float = 0.20) -> float:
+    before, count = runner_ticks()
+    if count == 0:
+        return 0.0
+    time.sleep(sample_seconds)
+    after, _ = runner_ticks()
+    ticks = max(0, after - before)
+    hz = os.sysconf("SC_CLK_TCK")
+    cores = max(1, os.cpu_count() or 1)
+    return min(100.0, ticks / hz / sample_seconds / cores * 100.0)
+
+
+def gpu_load() -> tuple[float, str]:
+    commands = [
+        (["nvidia-smi", "--query-gpu=utilization.gpu", "--format=csv,noheader,nounits"], "nvidia"),
+        (["rocm-smi", "--showuse", "--json"], "rocm"),
+    ]
+    for command, backend in commands:
+        try:
+            result = subprocess.run(command, capture_output=True, text=True, timeout=0.7, check=False)
+            if result.returncode != 0:
+                continue
+            if backend == "nvidia":
+                values = [float(line.strip()) for line in result.stdout.splitlines() if line.strip()]
+            else:
+                data = json.loads(result.stdout)
+                values = [float(str(value).strip("%")) for card in data.values()
+                          for key, value in card.items() if "GPU use" in key]
+            if values:
+                return max(values), backend
+        except (OSError, ValueError, subprocess.SubprocessError, json.JSONDecodeError):
+            continue
+    return 0.0, "cpu"
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--threshold", type=float, default=8.0)
+    parser.add_argument("--url", default=os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434"))
+    args = parser.parse_args()
+    try:
+        models = ollama_models(args.url)
+    except (OSError, urllib.error.URLError, json.JSONDecodeError) as error:
+        print(json.dumps({"online": False, "active": False, "load": 0, "modelCount": 0,
+                          "model": "", "backend": "none", "error": str(error)}))
+        return 0
+
+    gpu, backend = gpu_load()
+    cpu = cpu_load()
+    load = round(max(cpu, gpu), 1)
+    names = [str(model.get("name") or model.get("model") or "") for model in models]
+    print(json.dumps({"online": True, "active": load >= args.threshold, "load": load,
+                      "modelCount": len(models), "model": names[0] if names else "",
+                      "models": names, "backend": backend, "cpu": round(cpu, 1), "gpu": round(gpu, 1)}))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

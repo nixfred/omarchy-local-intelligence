@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.nixfred.local-intelligence",
+  "name": "Local Intelligence",
+  "version": "1.0.0",
+  "author": "nixfred",
+  "license": "MIT",
+  "description": "Monitor Ollama activity and control locally installed models from the Omarchy bar.",
+  "kinds": ["bar-widget"],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Local Intelligence",
+    "description": "Green while Ollama is idle, neon blue while a local model is inferencing, and red when Ollama is unavailable.",
+    "category": "AI",
+    "aliases": ["ollama", "llm", "ai", "inference"],
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "refreshIntervalMs": 1500,
+      "activeThreshold": 8
+    },
+    "schema": [
+      {
+        "key": "refreshIntervalMs",
+        "type": "integer",
+        "label": "Refresh interval (milliseconds)",
+        "min": 500,
+        "max": 10000,
+        "step": 250,
+        "defaultValue": 1500
+      },
+      {
+        "key": "activeThreshold",
+        "type": "integer",
+        "label": "Inference activity threshold (%)",
+        "min": 1,
+        "max": 50,
+        "step": 1,
+        "defaultValue": 8
+      }
+    ]
+  }
+}
