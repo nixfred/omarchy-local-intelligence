@@ -4,6 +4,8 @@ An Omarchy Shell bar widget for Ollama. Its status ring is green while the
 local AI runtime is idle, pulses neon blue during inference, and turns red
 when Ollama cannot be reached.
 
+![Local Intelligence preview](preview.png)
+
 Activity is detected from a short Ollama runner CPU sample and, when available,
 NVIDIA or AMD GPU utilization. Hover for the active model and measured load.
 Click the ring for a live utilization meter and model control panel; select any
