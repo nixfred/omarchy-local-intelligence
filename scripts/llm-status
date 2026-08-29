@@ -3,11 +3,13 @@
 
 import argparse
 import json
+import math
 import os
 from pathlib import Path
 import subprocess
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 
@@ -23,18 +25,46 @@ def bounded_text(value, limit: int = MAX_TEXT_LENGTH) -> str:
     return text[:limit]
 
 
+def normalize_url(url: str) -> str:
+    url = url.strip()
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.scheme.lower() in ("http", "https") and not parsed.netloc:
+        raise ValueError("Ollama URL must use http or https with a host")
+    url = url if "://" in url else "http://" + url
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.scheme.lower() not in ("http", "https") or not parsed.netloc or not parsed.hostname:
+        raise ValueError("Ollama URL must use http or https with a host")
+    try:
+        parsed.port
+    except ValueError as error:
+        raise ValueError("Ollama URL has an invalid port") from error
+    return url.rstrip("/")
+
+
+def reject_nonfinite(value: str):
+    raise ValueError(f"non-finite JSON number: {value}")
+
+
+def parse_finite_float(value: str) -> float:
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        reject_nonfinite(value)
+    return parsed
+
+
 def read_json_response(response) -> dict:
     raw = response.read(MAX_HTTP_RESPONSE_BYTES + 1)
     if len(raw) > MAX_HTTP_RESPONSE_BYTES:
         raise ValueError("Ollama response exceeds 1 MiB")
-    payload = json.loads(raw.decode("utf-8"))
+    payload = json.loads(raw.decode("utf-8"), parse_constant=reject_nonfinite,
+                         parse_float=parse_finite_float)
     if not isinstance(payload, dict):
         raise ValueError("Ollama response must be a JSON object")
     return payload
 
 
 def ollama_models(url: str) -> list[dict]:
-    with urllib.request.urlopen(url.rstrip("/") + "/api/ps", timeout=0.8) as response:
+    with urllib.request.urlopen(normalize_url(url) + "/api/ps", timeout=0.8) as response:
         payload = read_json_response(response)
     models = payload.get("models", [])
     if not isinstance(models, list):
@@ -91,8 +121,12 @@ def gpu_load() -> tuple[float, str]:
                 values = [float(line.strip()) for line in result.stdout.splitlines() if line.strip()]
             else:
                 data = json.loads(result.stdout)
+                if not isinstance(data, dict):
+                    raise ValueError("rocm-smi response must be a JSON object")
                 values = [float(str(value).strip("%")) for card in data.values()
+                          if isinstance(card, dict)
                           for key, value in card.items() if "GPU use" in key]
+            values = [value for value in values if math.isfinite(value) and 0 <= value <= 100]
             if values:
                 return max(values), backend
         except (OSError, ValueError, subprocess.SubprocessError, json.JSONDecodeError):
