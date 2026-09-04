@@ -11,6 +11,10 @@ Panel {
   moduleName: "io.github.nixfred.local-intelligence"
   manageIpc: false
 
+  property var anchorItem: null
+  property var hostWidget: null
+  readonly property var barIdentity: hostWidget || root
+
   readonly property color foreground: bar ? bar.foreground : Color.foreground
   readonly property color dim: Qt.darker(foreground, 1.5)
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
@@ -61,7 +65,10 @@ Panel {
     refresh()
   }
   function toggle() { opened ? close() : open() }
-  function refresh() { if (!statusProc.running) statusProc.running = true }
+  function refresh() {
+    if (root.hostWidget) { root.hostWidget.refresh(); return }
+    if (!statusProc.running) statusProc.running = true
+  }
   function refreshModels() {
     if (!listProc.running) listProc.running = true
   }
@@ -129,7 +136,7 @@ Panel {
   }
   Timer {
     interval: root.refreshMs
-    running: true
+    running: !root.hostWidget
     repeat: true
     triggeredOnStart: true
     onTriggered: root.refresh()
@@ -184,8 +191,8 @@ Panel {
 
   KeyboardPanel {
     id: panel
-    anchorItem: button
-    owner: root
+    anchorItem: root.anchorItem
+    owner: root.barIdentity
     bar: root.bar
     open: root.opened
     focusTarget: keyCatcher
