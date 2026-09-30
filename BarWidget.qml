@@ -76,6 +76,9 @@ BarWidget {
       panelLoader.active = true
     }
   }
+  // Panel.owner is this widget; KeyboardPanel.close() falls back to setting its
+  // own `open` (breaking the panel's binding) unless the owner has close().
+  function close() { if (panelLoader.item) panelLoader.item.close() }
   function toggle() {
     if (!panelLoader.item) { openPanel(); return }
     if (panelLoader.item.opened) panelLoader.item.close()
